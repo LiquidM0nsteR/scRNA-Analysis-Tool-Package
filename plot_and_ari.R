@@ -1,5 +1,6 @@
 # plot_and_ari.R
 # powered by LiquidMonsteR
+
 library(Seurat)
 library(ggplot2)
 library(clustree)  # For calculating ARI
@@ -9,7 +10,14 @@ library(grid)
 
 plot_umap <- function(seurat_obj, reduction_method, clustering_method) {
 
-  seurat_obj <- RunUMAP(seurat_obj, reduction = "reduction", dims = 1:10)
+  reduction_name <- switch(as.character(reduction_method),
+                          `1` = "pca",
+                          `2` = "cica",
+                          `3` = "scvi",
+                          `4` = "sca",
+                          stop("Invalid method"))
+
+  seurat_obj <- RunUMAP(seurat_obj, reduction = reduction_name, dims = 1:10)
 
   # 获取降维和聚类方法的名称
   reduction_methods <- c("PCA", "c-ICA", "Autoencoder", "scVI", "SCA")

@@ -1,93 +1,150 @@
 # requirements.R
 # Powered by LiquidMonsteR
-# List of required packages
+
+# 必需的R包列表
+# 如果还需要安装别的R包，直接在下面添加，然后命令行运行Rscript requirements.R即可
 required_packages <- c(
   "Seurat",
-  "ggplot2",
-  "dplyr",
-  "FNN",
-  "stringdist",
-  "igraph",
-  "cluster",
-  "mclust",
+  "SingleR",
+  "ica",
   "clustree",
+  "autoencoder",
+  "reticulate",
+  "mclust",
   "gridExtra",
   "grid",
-  "ica",
-  "autoencoder",
-  "scater",
-  "reticulate"
+  "stringdist",
+  "future",
+  "scran"
 )
 
 
-# Function to set CRAN mirror
-set_cran_mirror <- function(primary = "https://mirrors.huaweicloud.com/CRAN/", secondary = "https://cran.csiro.au/") {
-  options(repos = c(CRAN = primary))
-  message("Using primary CRAN mirror: ", primary)
-  tryCatch({
-    available.packages()
-  }, error = function(e) {
-    message("Primary CRAN mirror failed, switching to secondary: ", secondary)
-    options(repos = c(CRAN = secondary))
-    available.packages()
-  })
-}
-
-# Function to set Bioconductor mirror
-set_bioc_mirror <- function() {
-  options(BioC_mirror = "https://mirrors.tuna.tsinghua.edu.cn/bioconductor")
-}
-
-# Function to install Bioconductor if not already installed
-install_bioc <- function() {
-  if (!requireNamespace("BiocManager", quietly = TRUE)) {
-    install.packages("BiocManager", repos = getOption("repos"))
-  }
-  library(BiocManager)
-}
-
-# Function to install a package using conda
-install_conda <- function(pkg) {
-  tryCatch({
-    system(paste("conda install -y r-", pkg, sep = ""))
-  }, error = function(e) {
-    message("Failed to install package using conda: ", pkg)
-  })
-}
+required_pip_packages <- list(
+  list(name = "scvi-tools", version = "1.1.5"),
+  list(name = "shannonca", version = NULL)  # NULL 表示不检查版本
+)
 
 
-# Function to install and load packages
+##################################################################################################
+
+
+# 安装和加载包的函数
 install_and_load <- function(packages) {
+  conda_channels <- c("conda-forge", "anaconda", "bioconda", "r")
+  cran_mirrors <- c("https://mirrors.tuna.tsinghua.edu.cn/CRAN/",
+                    "https://mirrors.huaweicloud.com/CRAN/",
+                    "https://cloud.r-project.org/")
+
   for (pkg in packages) {
     if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-      tryCatch({
-        install.packages(pkg, dependencies = TRUE)
-      }, error = function(e) {
-        # If install.packages fails, use BiocManager to install
+      installed <- FALSE
+      # 尝试使用 conda 安装
+      for (channel in conda_channels) {
+        message("尝试使用 ", channel, " 安装包: ", pkg)
+        system(paste("conda install -c", channel, "-y r-", pkg, sep = " "))
         tryCatch({
-          BiocManager::install(pkg)
+          library(pkg, character.only = TRUE)
+          installed <- TRUE
+          break
         }, error = function(e) {
-          # If BiocManager install fails, use conda to install
-          install_conda(pkg)
+          message("通过 ", channel, " 安装包失败: ", pkg)
         })
-      })
-      tryCatch({
-        library(pkg, character.only = TRUE)
-      }, error = function(e) {
-        message("Failed to load package: ", pkg)
-      })
+      }
+
+      # 如果 conda 安装失败，尝试使用 CRAN 安装
+      if (!installed) {
+        for (cran_mirror in cran_mirrors) {
+          message("尝试使用 CRAN 镜像 ", cran_mirror, " 安装包: ", pkg)
+          options(repos = c(CRAN = cran_mirror))
+          tryCatch({
+            install.packages(pkg, dependencies = TRUE)
+            library(pkg, character.only = TRUE)
+            installed <- TRUE
+            break
+          }, error = function(e) {
+            message("使用 CRAN 镜像 ", cran_mirror, " 安装包失败: ", pkg)
+          })
+        }
+      }
+
+      # 如果 CRAN 安装失败，尝试使用 Bioconductor 安装
+      if (!installed) {
+        message("尝试使用 Bioconductor 安装包: ", pkg)
+        tryCatch({
+          BiocManager::install(pkg, dependencies = TRUE)
+          library(pkg, character.only = TRUE)
+          installed <- TRUE
+        }, error = function(e) {
+          message("使用 Bioconductor 安装包失败: ", pkg)
+        })
+
+        # 尝试使用备用的 Bioconductor 镜像
+        if (!installed) {
+          for (mirror in c("https://mirrors.tuna.tsinghua.edu.cn/bioconductor",
+                           "https://bioconductor.org")) {
+            message("尝试备用镜像: ", mirror)
+            options(BioC_mirror = mirror)
+            tryCatch({
+              BiocManager::install(pkg, dependencies = TRUE)
+              library(pkg, character.only = TRUE)
+              installed <- TRUE
+              break
+            }, error = function(e) {
+              message("备用镜像安装包失败: ", mirror)
+            })
+          }
+        }
+      }
+
+      # 如果所有方法均失败，提示用户
+      if (!installed) {
+        stop("无法安装和加载包: ", pkg)
+      }
     } else {
       library(pkg, character.only = TRUE)
     }
   }
 }
 
-# Set CRAN and Bioconductor mirrors
-set_cran_mirror()
-set_bioc_mirror()
 
-# Install Bioconductor and then required packages
-install_bioc()
+
+# 检查并安装 pip 包
+check_and_install_pip_package <- function(pkg_info) {
+  installed <- system(paste("pip show", pkg_info$name), intern = TRUE)
+  if (length(installed) == 0) {
+    message("安装 pip 包: ", pkg_info$name)
+    system(paste("pip3 install", pkg_info$name))
+  } else {
+    installed_version <- sub("Version: ", "", grep("Version:", installed, value = TRUE))
+    if (!is.null(pkg_info$version) && installed_version != pkg_info$version) {
+      message("更新 pip 包: ", pkg_info$name)
+      system(paste("pip3 install", pkg_info$name))
+    } else {
+      message("pip 包已安装且版本符合要求: ", pkg_info$name)
+    }
+  }
+}
+
+
+####################################################################################################
+
+
+# 设置CRAN镜像
+options(repos = c(CRAN = "https://mirrors.huaweicloud.com/CRAN/"))
+
+# 安装bioconductor
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", dependencies = TRUE)
+}
+library(BiocManager)
+
+
+# 检查并安装 pip 包
+for (pkg in required_pip_packages) {
+  check_and_install_pip_package(pkg)
+}
+
+# 安装其他的R包
 install_and_load(required_packages)
 
-# LquidMonsteR, all rights reserved.
+

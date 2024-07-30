@@ -4,7 +4,7 @@ library(Seurat)
 library(stringdist)
 
 # Function to check and preprocess Seurat object
-check_and_preprocess_seurat <- function(seurat_obj, is_multi_sample) {
+check_and_preprocess_seurat <- function(seurat_obj, is_multi_sample, use_spatial_coords) {
   # Check if Seurat object is provided
   if (missing(seurat_obj) || !inherits(seurat_obj, "Seurat")) {
     stop("Please provide a valid Seurat object.")
@@ -14,7 +14,12 @@ check_and_preprocess_seurat <- function(seurat_obj, is_multi_sample) {
   DefaultAssay(seurat_obj) <- "RNA"
   
   # Required meta.data columns
-  required_cols <- c("cell_type", "x", "y")
+  if(use_spatial_coords){
+    required_cols <- c("cell_type", "x", "y")
+  }else{
+    required_cols <- c("cell_type")
+  }
+
   
   # Additional columns required for multi-sample data
   if (is_multi_sample) {
@@ -50,17 +55,18 @@ check_and_preprocess_seurat <- function(seurat_obj, is_multi_sample) {
          paste(setdiff(required_cols, colnames(seurat_obj@meta.data)), collapse = ", "))
   }
   
-  # Check the dimensions of the gene expression matrix and spatial position matrix
-  gene_expr_matrix <- seurat_obj@assays$RNA$counts
-  spatial_matrix <- seurat_obj@meta.data[, c("x", "y")]
-  
-  if (ncol(gene_expr_matrix) != nrow(spatial_matrix)) {
-    stop("The number of cells in the gene expression matrix does not match the number of cells in the spatial position matrix.")
+  if(use_spatial_coords){
+    # Check the dimensions of the gene expression matrix and spatial position matrix
+    gene_expr_matrix <- seurat_obj@assays$RNA$counts
+    spatial_matrix <- seurat_obj@meta.data[, c("x", "y")]
+    
+    if (ncol(gene_expr_matrix) != nrow(spatial_matrix)) {
+      stop("The number of cells in the gene expression matrix does not match the number of cells in the spatial position matrix.")
+    }
+    
+    if (!all(colnames(gene_expr_matrix) == rownames(spatial_matrix))) {
+      stop("The order of cells in the spatial position matrix does not match the order in the gene expression matrix.")
+    }
   }
-  
-  if (!all(colnames(gene_expr_matrix) == rownames(spatial_matrix))) {
-    stop("The order of cells in the spatial position matrix does not match the order in the gene expression matrix.")
-  }
-  
   return(seurat_obj)
 }
