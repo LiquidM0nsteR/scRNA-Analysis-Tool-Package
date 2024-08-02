@@ -2,13 +2,13 @@
 # From Hainan institute of WhHan University of Technology, Sanya, Hainan.
 # Firstly created in July-7-2024
 
-source("./SingleR.R")
+source("./QC_SingleR.R")
 source("./requirements.R")
 source("./check_seurat.R")
 source("./dimention_reduction.R")
 source("./clustering.R")
 source("./plot_and_ari.R")
-
+options(warn = -1)
 
 ####################################### 参数设置面板 ####################################################
 
@@ -26,7 +26,7 @@ use_spatial_coords <- FALSE
 # 1: PCA   // 主成分分析
 # 2: c-ICA // 独立成分分析
 # 3: scvi  // 变分自动编码器
-# 4: SCA   // 意外成分分析, 注意：截至2024/7/29，该包在pypi上仍处于维护状态，暂时不可以使用
+
 reduction_method <- 1  # 选择降维方法，1到5之间的数字
 
 
@@ -46,7 +46,7 @@ if(seurat_from_rds){
   seurat_obj <- readRDS(rds_file_path)
 }else{
   print("将使用barcodes.tsv.gz、features.tsv.gz 和 matrix.mtx.gz生成Seurat对象")
-  # run_singleR()
+  run_singleR()
   seurat_obj <- readRDS("./init_data/seurat_obj.rds")
 }
 
@@ -56,11 +56,23 @@ seurat_obj <- standardize_reduction(seurat_obj, reduction_method)
 seurat_obj <- perform_clustering(seurat_obj, clustering_method, reduction_method)
 plots <- plot_umap(seurat_obj, reduction_method, clustering_method)
 
-# 保存图像到PDF文件
-pdf("./report.pdf")
-for (plot in plots) {
-  print(plot)
+
+
+# 获取当前目录下的所有PDF文件，排除名为report.pdf的文件
+pdf_files <- list.files(pattern = "\\.pdf$")
+pdf_files <- pdf_files[pdf_files != "report.pdf"]
+
+# 合并这些PDF文件
+if (length(pdf_files) > 0) {
+  pdf_combine(pdf_files, "report.pdf")
+  cat("PDF文件已合并到report.pdf\n")
+  
+  # 删除其他PDF文件
+  file.remove(pdf_files)
+  cat("其他PDF文件已删除。\n")
+} else {
+  cat("当前目录下没有找到可合并的PDF文件。\n")
 }
-dev.off()
+
 
 print("Successfully finished. ")

@@ -32,13 +32,13 @@ perform_clustering <- function(seurat_obj, method, reduction_method) {
 }
 
 run_findclusters <- function(seurat_obj, reduction_method) {
-  seurat_obj <- FindNeighbors(seurat_obj, reduction = reduction_method, dims = 1:20)
-  seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
+  seurat_obj <- FindNeighbors(seurat_obj, reduction = reduction_method)
+  seurat_obj <- FindClusters(seurat_obj, resolution = 1)
   return(seurat_obj)
 }
 
 run_walktrap <- function(seurat_obj, reduction_method) {
-  seurat_obj <- FindNeighbors(seurat_obj, reduction = reduction_method, dims = 1:20)
+  seurat_obj <- FindNeighbors(seurat_obj, reduction = reduction_method)
   # 提取邻居图
   graph_matrix <- as.matrix(seurat_obj@graphs[[1]])
   

@@ -6,19 +6,42 @@ library(reticulate)  # For Python interaction
 
 
 perform_dimensionality_reduction <- function(seurat_obj, method) {
+
   # 预处理数据
   seurat_obj <- NormalizeData(seurat_obj)
   seurat_obj <- FindVariableFeatures(seurat_obj)
   seurat_obj <- ScaleData(seurat_obj)
-  
+
+  # 运行PCA
+  seurat_obj <- RunPCA(seurat_obj)
+
+  # 使用ElbowPlot寻找最佳的低维维度
+  p1 <- ElbowPlot(seurat_obj) +
+    ggtitle("Elbow Plot for PCA Components")+
+    theme(
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 20), # 调整标题字体大小并居中
+        plot.title.position = "plot"
+    )
+
+  pdf("./report2.pdf")
+  print(p1)
+  dev.off()
+
+  # 提取PCA结果
+  pca_result <- seurat_obj[["pca"]]
+
+  # 计算解释方差比例
+  explained_variance <- cumsum(pca_result@stdev^2) / sum(pca_result@stdev^2)
+  num_components <- which(explained_variance >= 0.90)[1]
+
+  print(paste("至少解释90%方差的主成分数量:", num_components, "，设置为降维结果的维度"))
+
   if (method == 1) {
-    seurat_obj <- run_pca(seurat_obj)
+    seurat_obj <- run_pca(seurat_obj, num_components)
   } else if (method == 2) {
-    seurat_obj <- run_cica(seurat_obj)
+    seurat_obj <- run_cica(seurat_obj, num_components)
   } else if (method == 3) {
-    seurat_obj <- run_scvi(seurat_obj)
-  } else if (method == 4) {
-    seurat_obj <- run_sca(seurat_obj)
+    seurat_obj <- run_scvi(seurat_obj, num_components)
   } else {
     stop("Invalid reduction method. Choose a number between 1 and 5.")
   }
@@ -27,20 +50,20 @@ perform_dimensionality_reduction <- function(seurat_obj, method) {
   return(seurat_obj)
 }
 
-run_pca <- function(seurat_obj) {
-  seurat_obj <- RunPCA(seurat_obj, npcs = 30)
+run_pca <- function(seurat_obj, num_components) {
+  seurat_obj <- RunPCA(seurat_obj, npcs = num_components)
   embeddings <- seurat_obj[["pca"]]@cell.embeddings
   colnames(embeddings) <- paste0("reduction_", 1:ncol(embeddings))
   seurat_obj[["pca"]] <- CreateDimReducObject(embeddings = embeddings, key = "pca_")
   return(seurat_obj)
 }
 
-run_cica <- function(seurat_obj) {
+run_cica <- function(seurat_obj, num_components) {
   DefaultAssay(seurat_obj) <- "RNA"  # 确保设置默认的Assay
   features <- VariableFeatures(seurat_obj)
   gene_expr_matrix <- GetAssayData(seurat_obj, slot = "data")[features, ]
   print(paste0("size of gene_expr_matrix is ", nrow(gene_expr_matrix), "*", ncol(gene_expr_matrix)))
-  cica_result <- icafast(t(gene_expr_matrix), nc = 30)  # 假设我们选择提取30个独立成分
+  cica_result <- icafast(t(gene_expr_matrix), nc = num_components)  
   embeddings <- cica_result$S
   if (nrow(embeddings) < ncol(embeddings)) {
     embeddings <- t(embeddings)
@@ -53,7 +76,7 @@ run_cica <- function(seurat_obj) {
 }
 
 
-run_scvi <- function(seurat_obj) {
+run_scvi <- function(seurat_obj, num_components) {
   use_condaenv("rkit", required = TRUE)
   features <- VariableFeatures(seurat_obj)
   # Export Seurat object data to a file
@@ -96,7 +119,7 @@ else:
     scvi.model.SCVI.setup_anndata(adata)
 
 # Create and train the scVI model
-vae = scvi.model.SCVI(adata, n_latent=24)
+vae = scvi.model.SCVI(adata, n_latent=r.num_components)
 
 # Use parallel computing to speed up training
 with parallel_backend('threading', n_jobs = max(1, num_cores - 2)):  # Adjust to the actual number of available CPU cores
@@ -127,62 +150,6 @@ pd.DataFrame(latent, index=adata.obs.index).to_csv('./cache/latent.csv')
   return(seurat_obj)
 }
 
-
-
-run_sca <- function(seurat_obj) {
-  # 确保当前工作目录下有一个缓存文件夹
-  if (!dir.exists("./cache")) {
-    dir.create("./cache")
-  }
-
-  # 获取Variable Features
-  features <- VariableFeatures(seurat_obj)
-  gene_expr_matrix <- GetAssayData(seurat_obj, slot = "data")[features, ]
-
-  # 打印基因表达矩阵的大小
-  print(paste0("size of gene_expr_matrix is ", nrow(gene_expr_matrix), "*", ncol(gene_expr_matrix)))
-
-  # 将数据写入临时文件
-  expr_data <- t(gene_expr_matrix)
-  meta_data <- seurat_obj@meta.data
-  write.csv(expr_data, file = "./cache/expr_data.csv", row.names = TRUE)
-  write.csv(meta_data, file = "./cache/meta_data.csv", row.names = TRUE)
-
-  # 运行Python代码
-  py_run_string("
-import scanpy as sc
-from shannonca.dimred import reduce_scanpy
-import pandas as pd
-
-# 读取数据
-expr_data = pd.read_csv('./cache/expr_data.csv', index_col=0)
-meta_data = pd.read_csv('./cache/meta_data.csv', index_col=0)
-
-# 创建 AnnData 对象
-adata = sc.AnnData(X=expr_data.values, obs=meta_data)
-
-# 执行 SCA 降维
-reduce_scanpy(adata, keep_scores=True, keep_loadings=True, keep_all_iters=True, layer=None, key_added='sca', iters=1, n_comps=30)
-
-# 保存降维结果
-adata.obsm['X_sca'].to_csv('./cache/sca_embeddings.csv')
-")
-
-  # 读取降维结果
-  sca_embeddings <- read.csv("./cache/sca_embeddings.csv", row.names = 1)
-  if (nrow(sca_embeddings) < ncol(sca_embeddings)) {
-    sca_embeddings <- t(sca_embeddings)
-  }
-  rownames(sca_embeddings) <- colnames(gene_expr_matrix)
-  colnames(sca_embeddings) <- paste0("sca_", 1:ncol(sca_embeddings))
-
-  # 打印降维结果的大小
-  print(paste0("size of embeddings is ", nrow(sca_embeddings), "*", ncol(sca_embeddings)))
-
-  # 将降维结果保存到Seurat对象中
-  seurat_obj[["sca"]] <- CreateDimReducObject(embeddings = sca_embeddings, key = "sca_")
-  return(seurat_obj)
-}
 
 
 

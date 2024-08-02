@@ -7,21 +7,24 @@ required_packages <- c(
   "Seurat",
   "SingleR",
   "ica",
-  "clustree",
-  "autoencoder",
   "reticulate",
   "mclust",
   "gridExtra",
   "grid",
   "stringdist",
   "future",
-  "scran"
+  "scran",
+  "celldex",
+  "Matrix",
+  "pdftools",
+  "cowplot",
+  "scales"
 )
 
 
 required_pip_packages <- list(
-  list(name = "scvi-tools", version = "1.1.5"),
-  list(name = "shannonca", version = NULL)  # NULL 表示不检查版本
+  list(name = "scvi-tools", version = "1.1.5")
+
 )
 
 
