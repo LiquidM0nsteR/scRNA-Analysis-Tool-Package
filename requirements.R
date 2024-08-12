@@ -10,21 +10,26 @@ required_packages <- c(
   "reticulate",
   "mclust",
   "gridExtra",
-  "grid",
   "stringdist",
   "future",
   "scran",
   "celldex",
   "Matrix",
-  "pdftools",
   "cowplot",
-  "scales"
+  "scales",
+  "devtools",
+  "clusterProfiler",
+  "ReactomePA",
+  "org.Hs.eg.db",
+  "doParallel",
+  "foreach",
+  "hdf5r",
+  "pdftools"
 )
 
 
 required_pip_packages <- list(
   list(name = "scvi-tools", version = "1.1.5")
-
 )
 
 
@@ -83,10 +88,9 @@ install_and_load <- function(packages) {
 
         # 尝试使用备用的 Bioconductor 镜像
         if (!installed) {
-          for (mirror in c("https://mirrors.tuna.tsinghua.edu.cn/bioconductor",
-                           "https://bioconductor.org")) {
+          for (mirror in c(4, 6, 0)) {
             message("尝试备用镜像: ", mirror)
-            options(BioC_mirror = mirror)
+            chooseBioCmirror(ind = mirror) 
             tryCatch({
               BiocManager::install(pkg, dependencies = TRUE)
               library(pkg, character.only = TRUE)
@@ -132,8 +136,9 @@ check_and_install_pip_package <- function(pkg_info) {
 ####################################################################################################
 
 
-# 设置CRAN镜像
+# 设置镜像
 options(repos = c(CRAN = "https://mirrors.huaweicloud.com/CRAN/"))
+Sys.setenv(PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple")
 
 # 安装bioconductor
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
@@ -141,13 +146,20 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 }
 library(BiocManager)
 
-
 # 检查并安装 pip 包
 for (pkg in required_pip_packages) {
   check_and_install_pip_package(pkg)
 }
 
+# 设置bioconductor镜像
+chooseBioCmirror(ind = 4) 
+# 设置超时时间,单位为秒
+options(timeout = 1200)
 # 安装其他的R包
 install_and_load(required_packages)
 
-
+# 安装monocle3并自动升级所有依赖包
+devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always")
+devtools::install_github('immunogenomics/presto')
+library(monocle3)
+library(presto)

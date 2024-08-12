@@ -5,24 +5,17 @@ library(ica)  # For c-ICA
 library(reticulate)  # For Python interaction
 
 
-perform_dimensionality_reduction <- function(seurat_obj, method) {
-
-  # 预处理数据
-  seurat_obj <- NormalizeData(seurat_obj)
-  seurat_obj <- FindVariableFeatures(seurat_obj)
-  seurat_obj <- ScaleData(seurat_obj)
-
+perform_dimensionality_reduction <- function(seurat_obj, reduction_method = 1) {
   # 运行PCA
   seurat_obj <- RunPCA(seurat_obj)
 
   # 使用ElbowPlot寻找最佳的低维维度
   p1 <- ElbowPlot(seurat_obj) +
-    ggtitle("Elbow Plot for PCA Components")+
-    theme(
-        plot.title = element_text(hjust = 0.5, face = "bold", size = 20), # 调整标题字体大小并居中
-        plot.title.position = "plot"
-    )
+    ggtitle("Elbow Plot for PCA Components") +
+    theme(plot.title = element_text(size = 20, face = "bold", hjust = 0.5))
 
+
+  # 保存Elbow Plot为PDF文件
   pdf("./report2.pdf")
   print(p1)
   dev.off()
@@ -36,19 +29,26 @@ perform_dimensionality_reduction <- function(seurat_obj, method) {
 
   print(paste("至少解释90%方差的主成分数量:", num_components, "，设置为降维结果的维度"))
 
-  if (method == 1) {
+  # 根据方法选择降维算法
+  if (reduction_method == 1) {
     seurat_obj <- run_pca(seurat_obj, num_components)
-  } else if (method == 2) {
+  } else if (reduction_method == 2) {
     seurat_obj <- run_cica(seurat_obj, num_components)
-  } else if (method == 3) {
+  } else if (reduction_method == 3) {
     seurat_obj <- run_scvi(seurat_obj, num_components)
   } else {
-    stop("Invalid reduction method. Choose a number between 1 and 5.")
+    stop("Invalid reduction method. Choose a number between 1 and 3.")
   }
   
-  seurat_obj <- standardize_reduction(seurat_obj, method)
-  return(seurat_obj)
+  # 标准化降维结果
+  seurat_obj <- standardize_reduction(seurat_obj, reduction_method)
+  
+  print("降维完成.")
+
+  # 返回结果
+  return(list(seurat_obj = seurat_obj, num_components = num_components))
 }
+
 
 run_pca <- function(seurat_obj, num_components) {
   seurat_obj <- RunPCA(seurat_obj, npcs = num_components)
@@ -59,16 +59,19 @@ run_pca <- function(seurat_obj, num_components) {
 }
 
 run_cica <- function(seurat_obj, num_components) {
+
   DefaultAssay(seurat_obj) <- "RNA"  # 确保设置默认的Assay
   features <- VariableFeatures(seurat_obj)
   gene_expr_matrix <- GetAssayData(seurat_obj, slot = "data")[features, ]
-  print(paste0("size of gene_expr_matrix is ", nrow(gene_expr_matrix), "*", ncol(gene_expr_matrix)))
-  cica_result <- icafast(t(gene_expr_matrix), nc = num_components)  
+  print(paste0("基因表达矩阵的大小为： ", nrow(gene_expr_matrix), "*", ncol(gene_expr_matrix)))
+  
+  cica_result <- icafast(t(gene_expr_matrix), nc = num_components) 
+
   embeddings <- cica_result$S
   if (nrow(embeddings) < ncol(embeddings)) {
     embeddings <- t(embeddings)
   }
-  print(paste0("size of embeddings is ", nrow(embeddings), "*", ncol(embeddings)))
+  print(paste0("降维矩阵的大小为：", nrow(embeddings), "*", ncol(embeddings)))
   rownames(embeddings) <- colnames(gene_expr_matrix)
   colnames(embeddings) <- paste0("cica_", 1:ncol(embeddings))
   seurat_obj[["cica"]] <- CreateDimReducObject(embeddings = embeddings, key = "cica_")
@@ -77,23 +80,22 @@ run_cica <- function(seurat_obj, num_components) {
 
 
 run_scvi <- function(seurat_obj, num_components) {
+
   use_condaenv("rkit", required = TRUE)
   features <- VariableFeatures(seurat_obj)
   # Export Seurat object data to a file
   expr_data <- t(seurat_obj@assays$RNA$count[features, ])
   meta_data <- seurat_obj@meta.data
+
   write.csv(expr_data, file = "./cache/expr_data.csv", row.names = TRUE)
   write.csv(meta_data, file = "./cache/meta_data.csv", row.names = TRUE)
 
-  print(paste0("size of gene_expr_matrix is ", nrow(expr_data), "*", ncol(expr_data)))
+  print(paste0("基因表达矩阵的大小为： ", nrow(expr_data), "*", ncol(expr_data)))
 
-  py_run_string("
+  py_run_string(sprintf("
 
 import os
-
 import sys
-print(sys.executable)
-
 import scvi
 import scanpy as sc
 import pandas as pd
@@ -119,11 +121,11 @@ else:
     scvi.model.SCVI.setup_anndata(adata)
 
 # Create and train the scVI model
-vae = scvi.model.SCVI(adata, n_latent=r.num_components)
+vae = scvi.model.SCVI(adata, n_latent = %d)
 
 # Use parallel computing to speed up training
 with parallel_backend('threading', n_jobs = max(1, num_cores - 2)):  # Adjust to the actual number of available CPU cores
-    vae.train()
+    vae.train(max_epochs = 400)
 
 # Get the latent representation
 latent = vae.get_latent_representation()
@@ -131,7 +133,7 @@ latent = vae.get_latent_representation()
 # Save the latent representation
 pd.DataFrame(latent, index=adata.obs.index).to_csv('./cache/latent.csv')
 
-")
+", num_components))
   
 
   # 提取编码数据
@@ -141,7 +143,7 @@ pd.DataFrame(latent, index=adata.obs.index).to_csv('./cache/latent.csv')
     latent_representation <- t(latent_representation)
   }
 
-  print(paste0("size of latent is ", nrow(latent_representation), "*", ncol(latent_representation)))
+  print(paste0("降维矩阵的大小为：", nrow(latent_representation), "*", ncol(latent_representation)))
 
   rownames(latent_representation) <- rownames(expr_data)
   colnames(latent_representation) <- paste0("scvi_", 1:ncol(latent_representation))
@@ -153,8 +155,8 @@ pd.DataFrame(latent, index=adata.obs.index).to_csv('./cache/latent.csv')
 
 
 
-standardize_reduction <- function(seurat_obj, method) {
-  reduction_name <- switch(method,
+standardize_reduction <- function(seurat_obj, reduction_method) {
+  reduction_name <- switch(reduction_method,
                            `1` = "pca",
                            `2` = "cica",
                            `3` = "scvi",
@@ -182,3 +184,4 @@ standardize_reduction <- function(seurat_obj, method) {
   
   return(seurat_obj)
 }
+
