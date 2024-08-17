@@ -932,8 +932,7 @@ dependencies:
       - scvi-tools==1.1.5
       - seaborn==0.13.2
       - session-info==1.0.0
-      - shannonca==0.0.7
-      - sklearn==0.0.post12
+      - scikit-learn==1.3.2 
       - spagcn==1.2.7
       - tenacity==8.3.0
       - tensorstore==0.1.61
