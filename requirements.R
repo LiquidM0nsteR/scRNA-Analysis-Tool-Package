@@ -161,5 +161,9 @@ install_and_load(required_packages)
 # 安装monocle3并自动升级所有依赖包
 devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always")
 devtools::install_github('immunogenomics/presto')
+
+# 加载 monocle3 和 presto 之前先加载 data.table
+library(data.table)
+# 加载 monocle3 和 presto
 library(monocle3)
 library(presto)
