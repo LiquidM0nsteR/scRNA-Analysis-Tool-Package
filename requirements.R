@@ -24,7 +24,10 @@ required_packages <- c(
   "doParallel",
   "foreach",
   "hdf5r",
-  "pdftools"
+  "pdftools",
+  "harmony",
+  "sva",
+  "glmGamPoi"
 )
 
 
@@ -88,7 +91,7 @@ install_and_load <- function(packages) {
 
         # 尝试使用备用的 Bioconductor 镜像
         if (!installed) {
-          for (mirror in c(4, 6, 0)) {
+          for (mirror in c(6, 7, 4, 1)) {
             message("尝试备用镜像: ", mirror)
             chooseBioCmirror(ind = mirror) 
             tryCatch({
@@ -152,18 +155,15 @@ for (pkg in required_pip_packages) {
 }
 
 # 设置bioconductor镜像
-chooseBioCmirror(ind = 4) 
+chooseBioCmirror(ind = 5) 
 # 设置超时时间,单位为秒
-options(timeout = 1200)
+options(timeout = 2000)
 # 安装其他的R包
 install_and_load(required_packages)
 
 # 安装monocle3并自动升级所有依赖包
 devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always")
 devtools::install_github('immunogenomics/presto')
-
-# 加载 monocle3 和 presto 之前先加载 data.table
 library(data.table)
-# 加载 monocle3 和 presto
 library(monocle3)
 library(presto)
