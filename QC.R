@@ -79,7 +79,7 @@ QC_plot <- function(seurat_obj, seurat_from_rds){
     
 
     # 绘制细胞基因测量数量小提琴图
-    p1 <- VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) +
+    p1 <- VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, group.by = 'orig.ident') +
         theme(plot.title = element_text(hjust = 0.5, size = 16))
     # 设置总标题
     p1 <- wrap_plots(p1) + 

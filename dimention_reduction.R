@@ -5,9 +5,9 @@ library(ica)  # For c-ICA
 library(reticulate)  # For Python interaction
 
 
-perform_dimensionality_reduction <- function(seurat_obj, reduction_method = 1) {
+perform_dimensionality_reduction <- function(seurat_obj, reduction_method = 1, batch_corre_method = NULL) {
   # 运行PCA
-  seurat_obj <- RunPCA(seurat_obj)
+  seurat_obj <- RunPCA(seurat_obj, verbose = FALSE)
 
   # 使用ElbowPlot寻找最佳的低维维度
   p1 <- ElbowPlot(seurat_obj) +
@@ -31,9 +31,9 @@ perform_dimensionality_reduction <- function(seurat_obj, reduction_method = 1) {
 
   # 根据方法选择降维算法
   if (reduction_method == 1) {
-    seurat_obj <- run_pca(seurat_obj, num_components)
+    seurat_obj <- run_pca(seurat_obj, num_components, batch_corre_method)
   } else if (reduction_method == 2) {
-    seurat_obj <- run_cica(seurat_obj, num_components)
+    seurat_obj <- run_cica(seurat_obj, num_components, batch_corre_method)
   } else if (reduction_method == 3) {
     seurat_obj <- run_scvi(seurat_obj, num_components)
   } else {
@@ -50,23 +50,71 @@ perform_dimensionality_reduction <- function(seurat_obj, reduction_method = 1) {
 }
 
 
-run_pca <- function(seurat_obj, num_components) {
-  seurat_obj <- RunPCA(seurat_obj, npcs = num_components)
+
+run_pca <- function(seurat_obj, num_components, batch_corre_method) {
+  if (is.null(batch_corre_method)) {
+    # 单样本情况，直接使用原始数据进行PCA降维
+    DefaultAssay(seurat_obj) <- "RNA"  # 假设原始数据存储在 "RNA" assay 中
+  } else {
+    # 多样本情况，根据batch_corre_method选择去批次后的数据
+    assay_name <- switch(
+      batch_corre_method,
+      `1` = "integrated",  # Seurat Integration 的结果
+      `2` = "harmony",     # Harmony 的结果
+      `3` = "combat",      # Combat 的结果
+      `4` = "cca",         # CCA 的结果
+    )
+
+    # 检查是否存在对应的去批次校正结果
+    if (!assay_name %in% names(seurat_obj@assays)) {
+      stop(paste("The assay", assay_name, "is not found in the Seurat object. Make sure you have run batch correction."))
+    }
+
+    # 设置默认assay为指定的批次校正结果
+    DefaultAssay(seurat_obj) <- assay_name
+  }
+  
+  # 使用设定的默认assay进行PCA降维
+  seurat_obj <- RunPCA(seurat_obj, npcs = num_components, verbose = FALSE)
   embeddings <- seurat_obj[["pca"]]@cell.embeddings
   colnames(embeddings) <- paste0("reduction_", 1:ncol(embeddings))
   seurat_obj[["pca"]] <- CreateDimReducObject(embeddings = embeddings, key = "pca_")
   return(seurat_obj)
 }
 
-run_cica <- function(seurat_obj, num_components) {
 
-  DefaultAssay(seurat_obj) <- "RNA"  # 确保设置默认的Assay
-  features <- VariableFeatures(seurat_obj)
-  gene_expr_matrix <- GetAssayData(seurat_obj, slot = "data")[features, ]
+run_cica <- function(seurat_obj, num_components, batch_corre_method = NULL) {
+
+  if (is.null(batch_corre_method)) {
+    # 单样本情况，直接使用原始数据进行CICA降维
+    DefaultAssay(seurat_obj) <- "RNA"  # 假设原始数据存储在 "RNA" assay 中
+  } else {
+    # 多样本情况，根据batch_corre_method选择去批次后的数据
+    assay_name <- switch(
+      batch_corre_method,
+      `1` = "integrated",  # Seurat Integration 的结果
+      `2` = "harmony",     # Harmony 的结果
+      `3` = "combat",      # Combat 的结果
+      `4` = "cca",         # CCA 的结果
+    )
+
+    # 检查是否存在对应的去批次校正结果
+    if (!assay_name %in% names(seurat_obj@assays)) {
+      stop(paste("The assay", assay_name, "is not found in the Seurat object. Make sure you have run batch correction."))
+    }
+
+    # 设置默认assay为指定的批次校正结果
+    DefaultAssay(seurat_obj) <- assay_name
+  }
+  
+  # 提取基因表达矩阵并运行CICA降维
+
+  gene_expr_matrix <- GetAssayData(seurat_obj, slot = "data")
   print(paste0("基因表达矩阵的大小为： ", nrow(gene_expr_matrix), "*", ncol(gene_expr_matrix)))
   
   cica_result <- icafast(t(gene_expr_matrix), nc = num_components) 
 
+  # 创建降维对象并存储在Seurat对象中
   embeddings <- cica_result$S
   if (nrow(embeddings) < ncol(embeddings)) {
     embeddings <- t(embeddings)
@@ -75,16 +123,18 @@ run_cica <- function(seurat_obj, num_components) {
   rownames(embeddings) <- colnames(gene_expr_matrix)
   colnames(embeddings) <- paste0("cica_", 1:ncol(embeddings))
   seurat_obj[["cica"]] <- CreateDimReducObject(embeddings = embeddings, key = "cica_")
+  
   return(seurat_obj)
 }
 
 
 run_scvi <- function(seurat_obj, num_components) {
 
-  use_condaenv("rkit", required = TRUE)
+  use_python(Sys.which("python"), required = TRUE)
+
   features <- VariableFeatures(seurat_obj)
   # Export Seurat object data to a file
-  expr_data <- t(seurat_obj@assays$RNA$count[features, ])
+  expr_data <- t(seurat_obj@assays$RNA$counts[features, ])
   meta_data <- seurat_obj@meta.data
 
   write.csv(expr_data, file = "./cache/expr_data.csv", row.names = TRUE)
@@ -115,10 +165,13 @@ meta_data = pd.read_csv('./cache/meta_data.csv', index_col=0)
 adata = sc.AnnData(X=expr_data.values, obs=meta_data)
 
 # Set up the data for scVI
-if 'stage' in adata.obs:
-    scvi.model.SCVI.setup_anndata(adata, batch_key='stage')
+if 'orig.ident' in adata.obs and adata.obs['orig.ident'].nunique() > 1:
+    scvi.model.SCVI.setup_anndata(adata, batch_key='orig.ident')
+elif 'group' in adata.obs and adata.obs['group'].nunique() > 1:
+    scvi.model.SCVI.setup_anndata(adata, batch_key='group')
 else:
     scvi.model.SCVI.setup_anndata(adata)
+
 
 # Create and train the scVI model
 vae = scvi.model.SCVI(adata, n_latent = %d)

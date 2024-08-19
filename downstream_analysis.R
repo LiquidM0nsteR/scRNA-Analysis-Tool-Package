@@ -39,35 +39,35 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
     write.csv(all_markers, "./cache/all_markers.csv")
 
 
-    # 1. 计算每个细胞类型的细胞数并排序
-    cell_type_counts <- seurat_obj@meta.data %>%
-      group_by(seurat_clusters) %>%
-      summarize(count = n()) %>%
-      arrange(desc(count))
+    # # 1. 计算每个细胞类型的细胞数并排序
+    # cell_type_counts <- seurat_obj@meta.data %>%
+    #   group_by(seurat_clusters) %>%
+    #   summarize(count = n()) %>%
+    #   arrange(desc(count))
 
-    # 2. 计算累积和并选择能覆盖95%细胞的细胞类型
-    cell_type_counts <- cell_type_counts %>%
-      mutate(cumulative_sum = cumsum(count),
-            cumulative_perc = cumulative_sum / sum(count))
+    # # 2. 计算累积和并选择能覆盖95%细胞的细胞类型
+    # cell_type_counts <- cell_type_counts %>%
+    #   mutate(cumulative_sum = cumsum(count),
+    #         cumulative_perc = cumulative_sum / sum(count))
 
-    selected_cell_types <- cell_type_counts %>%
-      filter(cumulative_perc <= 0.95) %>%
-      pull(seurat_clusters)
+    # selected_cell_types <- cell_type_counts %>%
+    #   filter(cumulative_perc <= 0.95) %>%
+    #   pull(seurat_clusters)
 
-    # 如果覆盖95%的细胞数量的细胞类型不够多，可以放宽条件
-    if (length(selected_cell_types) <= 7) {
-      selected_cell_types <- cell_type_counts %>%
-        filter(cumulative_perc <= 0.98) %>%
-        pull(seurat_clusters)
-    }
+    # # 如果覆盖95%的细胞数量的细胞类型不够多，可以放宽条件
+    # if (length(selected_cell_types) <= 7) {
+    #   selected_cell_types <- cell_type_counts %>%
+    #     filter(cumulative_perc <= 0.98) %>%
+    #     pull(seurat_clusters)
+    # }
 
-    # 选择符合条件的细胞
-    selected_cells <- seurat_obj@meta.data %>%
-      filter(seurat_clusters %in% selected_cell_types) %>%
-      rownames()
+    # # 选择符合条件的细胞
+    # selected_cells <- seurat_obj@meta.data %>%
+    #   filter(seurat_clusters %in% selected_cell_types) %>%
+    #   rownames()
 
-    # 创建一个新的 Seurat 对象，只包含选定的细胞
-    seurat_obj_selected <- subset(seurat_obj, cells = selected_cells)
+    # # 创建一个新的 Seurat 对象，只包含选定的细胞
+    # seurat_obj_selected <- subset(seurat_obj, cells = selected_cells)
 
 
     # 使用slice_max选择每个群集前5个显著的标记基因
@@ -174,14 +174,24 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
     # 获取聚类信息
     clusters <- Idents(seurat_obj)
 
-    # 使用 SingleR 进行注释，确保 ref 和 labels 列表长度一致
+    # 检查是否存在 SCT assay
+    if ("SCT" %in% names(seurat_obj@assays)) {
+      test_data <- GetAssayData(seurat_obj, assay = "SCT", slot = "data")
+    } else {
+      # 如果没有 SCT，使用 RNA 的 data slot
+      test_data <- GetAssayData(seurat_obj, assay = "RNA", slot = "data")
+    }
+
+    # 使用 SingleR 进行注释
     singleR_results <- SingleR(
-      test = seurat_obj@assays$RNA$data, 
-      ref = ref_list,  # 确保 ref_list 为一个列表
-      labels = label_list,  # 确保 label_list 与 ref_list 长度一致
-      clusters = clusters,
+      test = test_data,  
+      ref = ref_list, 
+      labels = label_list, 
+      clusters = clusters,  
       de.method = "wilcox"
     )
+
+
 
     # 把SingleR的注释结果放到cell_type中
     seurat_obj$cell_type <- singleR_results$labels[match(clusters, rownames(singleR_results))]
@@ -285,19 +295,20 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
 
 
     ###################################### 保存图于pdf ############################################
-
+    
+    plot_index = max(0.9, length(unique(clusters)) / 16)
 
     # 将图保存于 pdf 中
-    pdf("./report4.pdf", width = 10, height = 8)
+    pdf("./report4.pdf", width = 12 * plot_index , height = 10 * plot_index)
       print(p1)
       print(p2)
     dev.off()
 
-    pdf("./report5.pdf", width = 12, height = 8)
+    pdf("./report5.pdf", width = 12 * plot_index, height = 8 * plot_index)
       print(p3)
     dev.off()
 
-    pdf("./report6.pdf", width = 12, height = 14)
+    pdf("./report6.pdf", width = 12 * plot_index, height = 14 * plot_index)
       # print(p4)
       plotScoreHeatmap(singleR_results)
     dev.off()
