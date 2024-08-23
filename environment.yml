@@ -1,10 +1,10 @@
 name: rkit
 channels:
   - pytorch
-  - nvidia
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
   - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+  - nvidia
   - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
   - conda-forge
   - defaults
 dependencies:
