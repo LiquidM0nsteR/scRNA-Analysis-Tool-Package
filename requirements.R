@@ -165,4 +165,3 @@ install_and_load(required_packages)
 devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always")
 devtools::install_github('immunogenomics/presto')
 
-system("conda clean --all -y")
