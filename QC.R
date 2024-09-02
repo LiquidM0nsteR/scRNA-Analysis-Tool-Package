@@ -13,12 +13,12 @@ library(parallel)
 
 
 
-run_QC <- function(seurat_obj, seurat_from_rds){
-
+run_QC <- function(seurat_obj, seurat_from_rds, batch_key){
+    
     if(!seurat_from_rds){
 
-        print(paste("基因数量为：", nrow(seurat_obj@assays$RNA$count)))
-        print(paste("细胞过滤前的细胞数为：", ncol(seurat_obj@assays$RNA$count)))
+        print(paste("基因数量为：", nrow(seurat_obj@assays$RNA$counts)))
+        print(paste("细胞过滤前的细胞数为：", ncol(seurat_obj@assays$RNA$counts)))
 
 
         # 计算线粒体基因比例
@@ -30,13 +30,15 @@ run_QC <- function(seurat_obj, seurat_from_rds){
         print("细胞筛选完毕.")
         print(paste("细胞过滤后的细胞数为：", nrow(seurat_obj@meta.data)))
         
-
         # 读取Seurat自带的细胞周期基因集，用来看细胞周期的分布
-        s.genes <-cc.genes$s.genes
-        g2m.genes<-cc.genes$g2m.genes
+        # 从 Seurat 加载新版的 cc.genes
+        cc.genes.updated.2019 <- Seurat::cc.genes.updated.2019
+        s.genes <- cc.genes.updated.2019$s.genes
+        g2m.genes <- cc.genes.updated.2019$g2m.genes
         
 
-        # 计算细胞周期得分
+        # # 计算细胞周期得分
+        seurat_obj <- NormalizeData(seurat_obj)
         seurat_obj <- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes)
 
 
@@ -46,20 +48,18 @@ run_QC <- function(seurat_obj, seurat_from_rds){
 
         library(future)
         num_cores <- max(1, parallel::detectCores() - 2)
-        plan("multicore", workers = num_cores)  # 这里的4可以根据CPU核心数进行调整
-        options(future.globals.maxSize = 2 * 10240 * 1024^2)  
+        plan("multicore", workers = num_cores)  
+        options(future.globals.maxSize = 224 * 1024^3)  
         # 加速ScaleData过程
-        seurat_obj <- ScaleData(seurat_obj, vars.to.regress = c("S.Score", "G2M.Score"), 
+        seurat_obj <- ScaleData(seurat_obj, vars.to.regress = c("S.Score", "G2M.Score", batch_key), 
             features = rownames(seurat_obj), do.scale = TRUE, do.center = TRUE)  
         plan("sequential") 
 
         print("消除完成.")
-
-
-        # 寻找高可变基因
-        seurat_obj <- FindVariableFeatures(seurat_obj)
        
     }
+
+    seurat_obj <- FindVariableFeatures(seurat_obj, verbose = FALSE)
 
     QC_plot(seurat_obj, seurat_from_rds)
 
@@ -72,6 +72,8 @@ QC_plot <- function(seurat_obj, seurat_from_rds){
     if(seurat_from_rds){
         # 计算线粒体基因比例
         seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-") 
+
+        # 计算细胞周期分数
         s.genes <-cc.genes$s.genes
         g2m.genes<-cc.genes$g2m.genes
         seurat_obj <- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes)
@@ -101,10 +103,9 @@ QC_plot <- function(seurat_obj, seurat_from_rds){
                 plot.title = element_text(size = 20, face = "bold", hjust = 0.5)
             )
         )
-
-
+    
     # 保存图像到PDF文件
-    pdf("./report1.pdf")
+    pdf("./report1.pdf", width = 10)
     print(p1)
     print(p2)
     dev.off()

@@ -18,7 +18,7 @@ library(pdftools)
 
 downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, cell_annotation_path =NULL, species){
 
-    # seurat_obj = readRDS("./init_data/seurat_obj.rds")
+    DefaultAssay(seurat_obj) <- "RNA"
 
     Idents(seurat_obj) <- seurat_obj$seurat_clusters
 
@@ -39,37 +39,6 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
     write.csv(all_markers, "./cache/all_markers.csv")
 
 
-    # # 1. 计算每个细胞类型的细胞数并排序
-    # cell_type_counts <- seurat_obj@meta.data %>%
-    #   group_by(seurat_clusters) %>%
-    #   summarize(count = n()) %>%
-    #   arrange(desc(count))
-
-    # # 2. 计算累积和并选择能覆盖95%细胞的细胞类型
-    # cell_type_counts <- cell_type_counts %>%
-    #   mutate(cumulative_sum = cumsum(count),
-    #         cumulative_perc = cumulative_sum / sum(count))
-
-    # selected_cell_types <- cell_type_counts %>%
-    #   filter(cumulative_perc <= 0.95) %>%
-    #   pull(seurat_clusters)
-
-    # # 如果覆盖95%的细胞数量的细胞类型不够多，可以放宽条件
-    # if (length(selected_cell_types) <= 7) {
-    #   selected_cell_types <- cell_type_counts %>%
-    #     filter(cumulative_perc <= 0.98) %>%
-    #     pull(seurat_clusters)
-    # }
-
-    # # 选择符合条件的细胞
-    # selected_cells <- seurat_obj@meta.data %>%
-    #   filter(seurat_clusters %in% selected_cell_types) %>%
-    #   rownames()
-
-    # # 创建一个新的 Seurat 对象，只包含选定的细胞
-    # seurat_obj_selected <- subset(seurat_obj, cells = selected_cells)
-
-
     # 使用slice_max选择每个群集前5个显著的标记基因
     top_markers <- all_markers %>%
       group_by(cluster) %>%
@@ -86,7 +55,7 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
 
     p2 <- DotPlot(seurat_obj, features = top_markers$gene[1:10], group.by = "seurat_clusters") + 
       RotatedAxis()+
-      ggtitle("Top 5 Marker Genes Expression Across Clusters")+
+      ggtitle("Top 10 Marker Genes Expression Across Clusters")+
       theme(plot.title = element_text(size = 20, face = "bold",hjust = 0.5))
 
     print("表达差异分析完成. ")
@@ -154,9 +123,9 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
         NULL  # 如果 ref_num 不匹配上述情况，则返回 NULL
       )
       
-      if (!is.null(ref)) {
+
+      if (ref_num < 8 && !is.null(ref)) {
         ref_list[[length(ref_list) + 1]] <- ref
-        
         # 添加相应的标签到 label_list
         label_list[[length(label_list) + 1]] <- if ("label.fine" %in% colnames(colData(ref))) {
           ref$label.fine
@@ -174,23 +143,15 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
     # 获取聚类信息
     clusters <- Idents(seurat_obj)
 
-    # 检查是否存在 SCT assay
-    if ("SCT" %in% names(seurat_obj@assays)) {
-      test_data <- GetAssayData(seurat_obj, assay = "SCT", slot = "data")
-    } else {
-      # 如果没有 SCT，使用 RNA 的 data slot
-      test_data <- GetAssayData(seurat_obj, assay = "RNA", slot = "data")
-    }
-
-    # 使用 SingleR 进行注释
+    # 使用 SingleR，同时选择刚刚得到的Marker基因，注释细胞类型
     singleR_results <- SingleR(
-      test = test_data,  
+      test = seurat_obj@assays$RNA$data[selected_genes, ],  
       ref = ref_list, 
       labels = label_list, 
-      clusters = clusters,  
+      clusters = clusters,
+      method = "cluster",
       de.method = "wilcox"
     )
-
 
 
     # 把SingleR的注释结果放到cell_type中
@@ -201,8 +162,6 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
       ggtitle("Cell Type Annotation on UMAP")+
       theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 20))
     
-    # 画出 SingleR 注释准确度的得分图。
-    #p4 <- plotScoreHeatmap(singleR_results)
 
     # 注释完成之后，看一下细胞类型的组成：
     # 计算每个样本内细胞类型的比例
@@ -339,10 +298,10 @@ downstream_analysis <- function(seurat_obj, anno_ref, count_matrix_path = NULL, 
       file.remove(pdf_report_files)
       
     } else {
-      print("当前目录下没有找到以'report'开头的PDF文件。\n")
+      print("当前目录下没有找到以'report'开头的PDF文件.\n")
     }
 
-    print("所有模块运行完成")
+    print("所有模块运行完成.")
 }
 
 

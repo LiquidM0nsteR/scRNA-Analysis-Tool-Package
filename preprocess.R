@@ -1,4 +1,4 @@
-# preprocess of seurat boj
+# preprocess of seurat obj
 # powered by LiquidMonsteR
 library(Seurat)
 library(stringdist)
@@ -12,9 +12,6 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
     print("请指定rds文件的路径: ")
     rds_file_path <- readLines(con = "stdin", n = 1)
     seurat_obj <- readRDS(rds_file_path)
-    seurat_obj <- NormalizeData(seurat_obj)
-    seurat_obj <- FindVariableFeatures(seurat_obj)
-    seurat_obj <- ScaleData(seurat_obj)
   } else {
     # 设置文件目录
     data_dir <- "./init_data/"
@@ -24,36 +21,13 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
       # 获取所有文件夹路径
       sample_dirs <- list.dirs(data_dir, recursive = FALSE)
 
-      # 初始化空的 counts 矩阵、元数据、以及存储细胞名称的列表
-      combined_counts <- NULL
-      combined_metadata <- data.frame()
-      all_cell_names <- c()  # 存储所有样本的细胞名称，用于检测重复
+      # 初始化一个列表来存储所有样本的 Seurat 对象
+      seurat_objects <- list()
 
-      # 遍历每个样本目录，先收集所有样本的细胞名称
-      for (sample_dir in sample_dirs) {
-        # 检查 .h5 文件
-        h5_file_path <- file.path(sample_dir, "filtered_feature_bc_matrix.h5")
-        if (!file.exists(h5_file_path)) {
-          stop(paste("缺失文件：在", sample_dir, "中没有找到 .h5 文件。"))
-        }
-
-        # 读取10X Genomics数据
-        seurat_temp <- Load10X_Spatial(data.dir = sample_dir)
+      # 遍历每个样本目录，读取数据并处理
+      for (i in seq_along(sample_dirs)) {
+        sample_dir <- sample_dirs[i]
         
-        # 收集细胞名称
-        cell_names <- Cells(seurat_temp)
-        all_cell_names <- c(all_cell_names, cell_names)
-      }
-
-      # 检测是否存在重复的细胞名称
-      if (any(duplicated(all_cell_names))) {
-        add_orig_ident <- TRUE
-      } else {
-        add_orig_ident <- FALSE
-      }
-
-      # 重新遍历每个样本目录，进行数据合并
-      for (sample_dir in sample_dirs) {
         # 检查 .h5 文件
         h5_file_path <- file.path(sample_dir, "filtered_feature_bc_matrix.h5")
         if (!file.exists(h5_file_path)) {
@@ -62,45 +36,52 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
 
         # 读取10X Genomics数据
         seurat_temp <- Load10X_Spatial(data.dir = sample_dir)
-        seurat_temp$orig.ident <- basename(sample_dir)
+        seurat_temp$orig.ident <- paste0("Sample", i)
+        
+        # 为 seurat_temp 的 meta.data 增加一列，列名可以自定义为 "SampleID"
+        seurat_temp <- AddMetaData(seurat_temp, metadata = paste0("Sample", i), col.name = "group")
 
-        # 获取空间坐标
+        names(seurat_temp@images) <- seurat_temp$orig.ident[1]
+        seurat_temp@images[names(seurat_temp@images)]$key <- paste0(names(seurat_temp@images), "_")
+        
+        # 获取空间坐标并添加到 meta.data
         coords_temp <- GetTissueCoordinates(seurat_temp)
-        # 添加 x 和 y 坐标到 Seurat 对象的 meta.data 中
         seurat_temp <- AddMetaData(seurat_temp, metadata = coords_temp[, "x"], col.name = "x")
         seurat_temp <- AddMetaData(seurat_temp, metadata = coords_temp[, "y"], col.name = "y")
 
-        # 根据检测结果判断是否修改细胞名称
-        if (add_orig_ident) {
-          cell_names <- Cells(seurat_temp)
-          new_cell_names <- paste0(seurat_temp$orig.ident, "_", cell_names)
-          seurat_temp <- RenameCells(seurat_temp, new.names = new_cell_names)
-        }
-
-        # 合并 counts 矩阵
-        counts_matrix <- GetAssayData(seurat_temp, slot = "counts")
-        if (is.null(combined_counts)) {
-          combined_counts <- counts_matrix
-        } else {
-          combined_counts <- cbind(combined_counts, counts_matrix)
-        }
-
-        # 合并元数据
-        combined_metadata <- rbind(combined_metadata, seurat_temp@meta.data)
+        # 将处理后的 Seurat 对象添加到列表中
+        seurat_objects[[i]] <- seurat_temp
       }
 
-      # 创建合并后的 Seurat 对象
-      seurat_obj <- CreateSeuratObject(counts = combined_counts, meta.data = combined_metadata)
+      # 合并所有 Seurat 对象
+      seurat_obj <- merge(seurat_objects[[1]], y = seurat_objects[-1], add.cell.ids = paste0("Sample", seq_along(seurat_objects)))
 
-      # 样本数判断：单样本使用 NormalizeData，多样本使用 SCTransform
-      num_samples <- length(sample_dirs)
-      if (num_samples == 1) {
-        seurat_obj <- NormalizeData(seurat_obj)
-        DefaultAssay(seurat_obj) <- "RNA"
-      } else {
-        seurat_obj <- SCTransform(seurat_obj, verbose = FALSE)
-        DefaultAssay(seurat_obj) <- "SCT"
+      # 获取 Seurat 对象中的所有层数据
+      all_layers <- seurat_obj[["Spatial"]]@layers
+      # 初始化合并后的 counts 矩阵
+      merged_counts <- NULL
+      # 遍历所有层并合并 counts 数据
+      for (layer in all_layers) {
+        # 检查当前层是否为 counts 数据层
+        if (inherits(layer, "Matrix")) {
+          # 合并 counts 矩阵
+          if (is.null(merged_counts)) {
+            merged_counts <- layer
+          } else {
+            merged_counts <- cbind(merged_counts, layer)
+          }
+        }
       }
+      # 更新到 Seurat 对象的 counts 中
+      seurat_obj[["Spatial"]]$counts <- merged_counts
+      # 确定 counts 层的索引
+      counts_index <- which(names(seurat_obj[["Spatial"]]@layers) == "counts")
+      # 设置 counts 为默认的 layer
+      seurat_obj[["Spatial"]]@default <- counts_index
+
+      # 检查结果
+      print(seurat_obj)
+
     } else {
       print("将使用 filtered_feature_bc_matrix.h5 文件生成 Seurat 对象")
       
@@ -145,9 +126,6 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
             seurat_temp <- RenameCells(seurat_temp, new.names = new_cell_names)
           }
 
-          # 归一化数据
-          seurat_temp <- NormalizeData(seurat_temp)
-
           counts_matrix <- GetAssayData(seurat_temp, slot = "counts")
 
           if (is.null(combined_counts)) {
@@ -160,16 +138,6 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
         }
 
         seurat_obj <- CreateSeuratObject(counts = combined_counts, meta.data = combined_metadata)
-
-        # 样本数判断：单样本使用 NormalizeData，多样本使用 SCTransform
-        num_samples <- length(h5_files)
-        if (num_samples == 1) {
-          seurat_obj <- NormalizeData(seurat_obj)
-          DefaultAssay(seurat_obj) <- "RNA"
-        } else {
-          seurat_obj <- SCTransform(seurat_obj, verbose = FALSE)
-          DefaultAssay(seurat_obj) <- "SCT"
-        }
       }
     }
   }
@@ -181,83 +149,95 @@ init_seurat <- function(seurat_from_rds, use_spatial_coords) {
 
 # 检查和预处理 Seurat 对象的函数
 check_and_preprocess_seurat <- function(seurat_obj, use_spatial_coords) {
-  # 检查是否提供了 Seurat 对象
-  if (missing(seurat_obj) || !inherits(seurat_obj, "Seurat")) {
-    stop("请提供一个有效的 Seurat 对象。")
-  }
-  
-  # # 将默认 assay 设置为 RNA
-  # DefaultAssay(seurat_obj) <- "RNA"
-  
-  # 初始需要的列名
-  required_cols <- c("cell_type", "x", "y", "orig.ident", "group", "nFeature_RNA", "nCount_RNA")
-  
-  # 模糊匹配函数，用于找到最接近的列名
-  match_columns <- function(meta_data, required_cols) {
-    matched_cols <- sapply(required_cols, function(req_col) {
-      col_distances <- stringdist::stringdistmatrix(req_col, colnames(meta_data), method = "jw")
-      closest_col <- colnames(meta_data)[which.min(col_distances)]
-      # 如果最小距离大于某个阈值（如0.5），则认为没有匹配到
-      if (min(col_distances) > 0.5) {
-        return(NA)
-      }
-      return(closest_col)
-    })
-    names(matched_cols) <- required_cols
-    return(matched_cols)
-  }
-  
-  # 使用模糊匹配匹配列名
-  matched_cols <- match_columns(seurat_obj@meta.data, required_cols)
-  
-  
-  # 检查 orig.ident 列是否存在且包含多个不同的元素
-  if ("orig.ident" %in% matched_cols && length(unique(seurat_obj@meta.data$orig.ident)) > 1) {
-    is_multiple <- TRUE
-  }
+    # 检查是否提供了 Seurat 对象
+    if (missing(seurat_obj) || !inherits(seurat_obj, "Seurat")) {
+        stop("请提供一个有效的 Seurat 对象. ")
+    }
 
-  # 如果 orig.ident 不满足多样本条件，再检查 group 列
-  if (!is_multiple && "group" %in% matched_cols && length(unique(seurat_obj@meta.data$group)) > 1) {
-    is_multiple <- TRUE
-  }
-  
-  # 根据检测结果过滤所需的列名
-  final_required_cols <- c()
-  if (use_spatial_coords) {
-    final_required_cols <- c(final_required_cols, "x", "y")
-  }
-  if (is_multiple) {
-    final_required_cols <- c(final_required_cols, "orig.ident", "group")
-  }
-  
-  # 将匹配到的列名重命名为标准名称
-  for (req_col in final_required_cols) {
-    col_name <- matched_cols[req_col]
-    if (!req_col %in% colnames(seurat_obj@meta.data)) {
-      seurat_obj@meta.data[[req_col]] <- seurat_obj@meta.data[[col_name]]
-      seurat_obj@meta.data[[col_name]] <- NULL
+
+    active_assay <- seurat_obj@assays[[DefaultAssay(seurat_obj)]]
+    # 检查 counts 数据的维度
+    if (all(dim(active_assay$counts) == 0)) {
+        stop("Seurat 对象中的 counts 数据为空（0x0）. ")
     }
-  }
-  
-  # 检查是否所有必需的列名都存在
-  if (!all(final_required_cols %in% colnames(seurat_obj@meta.data))) {
-    stop("Seurat 对象的 meta.data 中缺少一个或多个必需的列名: ", 
-         paste(setdiff(final_required_cols, colnames(seurat_obj@meta.data)), collapse = ", "))
-  }
-  
-  if (use_spatial_coords) {
-    # 检查基因表达矩阵和空间位置矩阵的维度
-    gene_expr_matrix <- seurat_obj@assays$RNA$counts
-    spatial_matrix <- seurat_obj@meta.data[, c("x", "y")]
+
+    # 初始需要的列名
+    required_cols <- c("cell_type", "x", "y", "orig.ident", "group")
     
-    if (ncol(gene_expr_matrix) != nrow(spatial_matrix)) {
-      stop("基因表达矩阵中的细胞数量与空间位置矩阵中的细胞数量不匹配。")
+    # 模糊匹配函数，用于找到最接近的列名
+    match_columns <- function(meta_data, required_cols) {
+        matched_cols <- sapply(required_cols, function(req_col) {
+            col_distances <- stringdist::stringdistmatrix(req_col, colnames(meta_data), method = "jw")
+            closest_col <- colnames(meta_data)[which.min(col_distances)]
+            # 如果最小距离大于某个阈值（如0.5），则认为没有匹配到
+            if (min(col_distances) > 0.5) {
+                return(NA)
+            }
+            return(closest_col)
+      })
+      names(matched_cols) <- required_cols
+      return(matched_cols)
     }
     
-    if (!all(colnames(gene_expr_matrix) == rownames(spatial_matrix))) {
-      stop("空间位置矩阵中的细胞顺序与基因表达矩阵中的顺序不匹配。")
+    # 使用模糊匹配匹配列名
+    matched_cols <- match_columns(seurat_obj@meta.data, required_cols)
+    
+    batch_key <- NULL
+
+    # 检查 orig.ident 列是否存在且包含多个不同的元素
+    if ("orig.ident" %in% matched_cols && length(unique(seurat_obj@meta.data$orig.ident)) > 1) {
+        batch_key <- "orig.ident"
     }
-  }
+
+    # 如果 orig.ident 不满足多样本条件，再检查 group 列
+    if (is.null(batch_key) && "group" %in% matched_cols && length(unique(seurat_obj@meta.data$group)) > 1) {
+        batch_key <- "group"
+    }
+    
+    # 根据检测结果过滤所需的列名
+    final_required_cols <- c()
+    if (use_spatial_coords) {
+        final_required_cols <- c(final_required_cols, "x", "y")
+    }
+    if (!is.null(batch_key)) {
+        final_required_cols <- c(final_required_cols, "orig.ident", "group")
+    }
+    
+    # 将匹配到的列名重命名为标准名称
+    for (req_col in final_required_cols) {
+        col_name <- matched_cols[req_col]
+        if (!req_col %in% colnames(seurat_obj@meta.data)) {
+            seurat_obj@meta.data[[req_col]] <- seurat_obj@meta.data[[col_name]]
+            seurat_obj@meta.data[[col_name]] <- NULL
+        }
+    }
+    
+    # 检查是否所有必需的列名都存在
+    if (!all(final_required_cols %in% colnames(seurat_obj@meta.data))) {
+        stop("Seurat 对象的 meta.data 中缺少一个或多个必需的列名: ", 
+            paste(setdiff(final_required_cols, colnames(seurat_obj@meta.data)), collapse = ", "))
+    }
   
-  return(list(seurat_obj = seurat_obj, is_multiple = is_multiple))
+    if (use_spatial_coords) {
+        # 检查基因表达矩阵和空间位置矩阵的维度
+        gene_expr_matrix <- active_assay$counts
+        spatial_matrix <- seurat_obj@meta.data[, c("x", "y")]
+        
+        if (ncol(gene_expr_matrix) != nrow(spatial_matrix)) {
+            stop("基因表达矩阵中的细胞数量与空间位置矩阵中的细胞数量不匹配. ")
+        }
+        
+        if (!all(colnames(gene_expr_matrix) == rownames(spatial_matrix))) {
+            stop("空间位置矩阵中的细胞顺序与基因表达矩阵中的顺序不匹配. ")
+        }
+    }
+
+    if(use_spatial_coords){
+        # 创建一个新的 RNA assay，使用 Spatial 的计数数据
+        seurat_obj[["RNA"]] <- CreateAssayObject(counts = seurat_obj[["Spatial"]]$counts)
+    }
+
+    DefaultAssay(seurat_obj) <- "RNA"
+
+    return(list(seurat_obj = seurat_obj, batch_key = batch_key))
 }
