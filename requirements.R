@@ -24,22 +24,33 @@ required_packages <- c(
   "doParallel",
   "foreach",
   "hdf5r",
+  "rhdf5",
+  "Rfast2",
+  "FNN",
   "pdftools",
   "harmony",
   "sva",
-  "glmGamPoi"
-)
+  "glmGamPoi",
+  "GENIE3",
+  "hgu133plus2.db",
+  "ComplexHeatmap",
+  "NMF",
+  "doRNG",
+  "ggraph"
+) 
 
 
 required_pip_packages <- list(
-  list(name = "scvi-tools", version = "1.1.5")
+  list(name = "torch", version = "2.3.1"),
+  list(name = "scvi-tools", version = "1.1.5"),
+  list(name = "scVelo", version = "0.3.2")
 )
 
 
 ##################################################################################################
 
 
-# 安装和加载包的函数
+# 安装和加载R包
 install_and_load <- function(packages) {
   conda_channels <- c("conda-forge", "anaconda", "bioconda", "r")
   cran_mirrors <- c("https://mirrors.tuna.tsinghua.edu.cn/CRAN/",
@@ -47,14 +58,14 @@ install_and_load <- function(packages) {
                     "https://cloud.r-project.org/")
 
   for (pkg in packages) {
-    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
       installed <- FALSE
       # 尝试使用 conda 安装
       for (channel in conda_channels) {
         message("尝试使用 ", channel, " 安装包: ", pkg)
         system(paste("conda install -c", channel, "-y r-", pkg, sep = " "))
         tryCatch({
-          library(pkg, character.only = TRUE)
+          suppressMessages(library(pkg, character.only = TRUE))
           installed <- TRUE
           break
         }, error = function(e) {
@@ -69,7 +80,7 @@ install_and_load <- function(packages) {
           options(repos = c(CRAN = cran_mirror))
           tryCatch({
             install.packages(pkg, dependencies = TRUE)
-            library(pkg, character.only = TRUE)
+            suppressMessages(library(pkg, character.only = TRUE))
             installed <- TRUE
             break
           }, error = function(e) {
@@ -82,8 +93,8 @@ install_and_load <- function(packages) {
       if (!installed) {
         message("尝试使用 Bioconductor 安装包: ", pkg)
         tryCatch({
-          BiocManager::install(pkg, dependencies = TRUE)
-          library(pkg, character.only = TRUE)
+          BiocManager::install(pkg, dependencies = TRUE, update = TRUE)
+          suppressMessages(library(pkg, character.only = TRUE))
           installed <- TRUE
         }, error = function(e) {
           message("使用 Bioconductor 安装包失败: ", pkg)
@@ -96,7 +107,7 @@ install_and_load <- function(packages) {
             chooseBioCmirror(ind = mirror) 
             tryCatch({
               BiocManager::install(pkg, dependencies = TRUE)
-              library(pkg, character.only = TRUE)
+              suppressMessages(library(pkg, character.only = TRUE))
               installed <- TRUE
               break
             }, error = function(e) {
@@ -111,7 +122,7 @@ install_and_load <- function(packages) {
         stop("无法安装和加载包: ", pkg)
       }
     } else {
-      library(pkg, character.only = TRUE)
+      suppressMessages(library(pkg, character.only = TRUE))
     }
   }
 }
@@ -149,6 +160,11 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 }
 library(BiocManager)
 
+
+if (Sys.which("gsl-config") == "" && system("conda install -c conda-forge gsl -y", intern = FALSE) != 0) {
+    stop("conda 安装 gsl 出错.")
+}
+
 # 检查并安装 pip 包
 for (pkg in required_pip_packages) {
   check_and_install_pip_package(pkg)
@@ -161,10 +177,36 @@ options(timeout = 2000)
 # 安装其他的R包
 install_and_load(required_packages)
 
-# 安装monocle3并自动升级所有依赖包
-devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always")
-devtools::install_github('immunogenomics/presto')
-devtools::install_github("shangll123/SpatialPCA")
-library(SpatialPCA)
-library(monocle3)
-library(presto)
+
+
+###########################################################################################################
+
+
+
+# 安装monocle3等，并自动升级所有依赖包
+if (!requireNamespace("monocle3", quietly = TRUE)){
+    devtools::install_github('cole-trapnell-lab/monocle3', upgrade = "always", dependencies =TRUE)
+}
+if (!requireNamespace("presto", quietly = TRUE)){
+    devtools::install_github('immunogenomics/presto', upgrade = "always", dependencies =TRUE)
+}
+if (!requireNamespace("SpatialPCA", quietly = TRUE)){
+    devtools::install_github("shangll123/SpatialPCA", upgrade = "always", dependencies =TRUE)
+}
+if (!requireNamespace("circlize", quietly = TRUE)){
+    devtools::install_github("jokergoo/circlize", upgrade = "always", dependencies =TRUE)
+}
+if (!requireNamespace("CellChat", quietly = TRUE)){
+    devtools::install_github("jinworks/CellChat", upgrade = "always", dependencies =TRUE)
+}
+if (length(system("pip show SEDR", intern = TRUE)) == 0) {
+  system("pip install git+https://github.com/JinmiaoChenLab/SEDR.git")
+  sedr_installed <- system("pip show SEDR", intern = TRUE)
+}
+
+if (length(system("pip show SEDR", intern = TRUE)) == 0) {stop("SEDR 安装失败. ")}
+suppressMessages(library(SpatialPCA))
+suppressMessages(library(monocle3))
+suppressMessages(library(presto))
+suppressMessages(library(circlize))
+suppressMessages(library(CellChat))

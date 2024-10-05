@@ -234,7 +234,7 @@ check_and_preprocess_seurat <- function(seurat_obj, use_spatial_coords) {
 
     if(use_spatial_coords){
         # 创建一个新的 RNA assay，使用 Spatial 的计数数据
-        seurat_obj[["RNA"]] <- CreateAssayObject(counts = seurat_obj[["Spatial"]]$counts)
+        seurat_obj[["RNA"]] <- CreateAssayObject(counts = active_assay$counts)
     }
 
     DefaultAssay(seurat_obj) <- "RNA"

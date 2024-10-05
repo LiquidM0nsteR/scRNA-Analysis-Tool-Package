@@ -14,20 +14,23 @@ source("./batch_correction.R")
 perform_dimensionality_reduction <- function(seurat_obj, reduction_method, batch_correction_method, batch_key) {
 
     print("正在进行降维. ")
-
+    # seurat_obj <- NormalizeData(seurat_obj, verbose = FALSE)
+    # seurat_obj <- ScaleData(seurat_obj, verbose = FALSE)
+    # seurat_obj <- FindVariableFeatures(seurat_obj, verbose = FALSE)
     seurat_obj <- RunPCA(seurat_obj, verbose = FALSE)
     seurat_obj <- RunUMAP(seurat_obj, dims = 1:30 ,verbose = FALSE)
   
-    # 如果是多样本，先执行去批次操作（Harmony方法除外）
+    # 如果是多样本，先执行去批次操作（Harmony, deepMNN方法在降维后执行）
     if(!is.null(batch_key)){ 
-        if(!(reduction_method %in% c(3, 4))){ # scvi 和 SpatialPCA 自带去批次功能，所以跳过这一段
+        if(!(reduction_method %in% c(3, 4))){ # scvi, SpatialPCA 自带去批次功能，所以跳过这一段
             # 根据 batch_correction_method 的值调用相应的去批次方法
             seurat_obj <- switch(
               batch_correction_method,
-              `1` = run_seurat_integration(seurat_obj, batch_key),  # 1 对应 Seurat Integration            
+              `1` = run_seurat_integrating(seurat_obj, batch_key),  # 1 对应 Seurat Integration            
               `2` = run_combat(seurat_obj, batch_key),              # 2 对应 Combat
               `3` = seurat_obj,                                     # 3 对应 Harmony，等降维之后再执行
-              `4` = seurat_obj                                      # 4 对应 不去批次，直接返回原Seurat对象
+              `4` = seurat_obj,                                     # 4 对应 deepMNN，等降维之后再执行
+              `5` = seurat_obj                                      # 5 对应 不去批次，直接返回原Seurat对象
             )
         }
     }
@@ -58,26 +61,40 @@ perform_dimensionality_reduction <- function(seurat_obj, reduction_method, batch
     explained_variance <- cumsum(pca_result@stdev^2) / sum(pca_result@stdev^2)
     num_components <- which(explained_variance >= 0.90)[1]
 
-    print(paste("至少解释90%方差的主成分数量:", num_components, "，设置为降维结果的维度. "))
+    print(paste("至少解释90%方差的主成分数量:", num_components, ". "))
 
 
-    # 根据方法选择降维算法
+    # 根据方法编号选择降维算法
     seurat_obj <- switch(reduction_method,
                         `1` = run_pca(seurat_obj, num_components),
                         `2` = run_cica(seurat_obj, num_components),
                         `3` = run_scvi(seurat_obj, num_components),
                         `4` = run_SpatialPCA(seurat_obj, batch_key, num_components),
                         `5` = run_Seurat_Spatial(seurat_obj, batch_key, num_components),
-                        stop("Invalid reduction method. Choose a number between 1 and 5.")
+                        `6` = run_SEDR(seurat_obj, batch_key, num_components),
+                        stop("无效的降维方法编号，请重选1到6之间的数字.")
     )
 
 
-    # 如果选用了Harmony去批次，那么就降维之后再去批次。
-    if(!is.null(batch_key) && batch_correction_method == 3 && !(reduction_method %in% c(3, 4))){
-        print("开始进行 Harmony 去批次.")
-        seurat_obj <- run_harmony(seurat_obj, batch_key, reduction_method, num_components)
+    # 如果是多样本选用了 Harmony 或者 deepMNN 去批次，并且降维方法中不自带去批次功能，那么就降维之后再去批次。
+    if(!is.null(batch_key) && !(reduction_method %in% c(3, 4))){
+        reduction_name <- switch(reduction_method,
+                    `1` = "PCA",
+                    `2` = "cica",
+                    `3` = "scvi",
+                    `4` = 'SpatialPCA',
+                    `5` = 'SeuratSpatial',
+                    `6` = "SEDR",
+                    stop("无效的降维方法编号."))
+        if(batch_correction_method == 3){
+            print("开始进行 Harmony 去批次.")
+            seurat_obj <- run_harmony(seurat_obj, batch_key, reduction_name)
+        }
+        if(batch_correction_method == 4){
+            print("开始进行 deepMNN 去批次.")
+            seurat_obj <- run_deepMNN(seurat_obj, batch_key, reduction_name)
+        }
     }
-    
 
     print("降维完成. ")
 
@@ -377,4 +394,88 @@ run_Seurat_Spatial <- function(seurat_obj, batch_key, num_components) {
 
 
 
+run_SEDR <- function(seurat_obj, batch_key, num_components) {
+  
+    # 设置环境
+    use_python(Sys.which("python"), required = TRUE)
+    
+    # 设定表达矩阵和空间坐标
+    expr_data <- t(seurat_obj@assays$RNA$counts)
+    spatial_coords <- seurat_obj@meta.data[, c("x", "y")]
+    
+    # 通过csv文件将数据传递给下面的python脚本
+    write.csv(expr_data, file = "./cache/expr_data.csv", row.names = TRUE)
+    write.csv(spatial_coords, file = "./cache/spatial_coords.csv", row.names = TRUE)
+    write.csv(seurat_obj@meta.data, file = "./cache/meta_data.csv", row.names = TRUE)
+    
+    # 用reticulate运行SEDR
+    py_run_string(sprintf("
+import torch
+import SEDR
+import scanpy as sc
+import pandas as pd
+import harmonypy as hm
+from sklearn.decomposition import PCA
+
+# Load data
+expr_data = pd.read_csv('./cache/expr_data.csv', index_col=0)
+spatial_coords = pd.read_csv('./cache/spatial_coords.csv', index_col=0)
+meta_data = pd.read_csv('./cache/meta_data.csv', index_col=0)
+
+# Create AnnData object
+adata = sc.AnnData(X=expr_data.values, obs=meta_data)
+adata.obsm['spatial'] = spatial_coords.values
+adata.layers['count'] = adata.X.copy()
+
+# Preprocessing: filter, normalize, and scale the data
+sc.pp.filter_genes(adata, min_cells=50)
+sc.pp.filter_genes(adata, min_counts=10)
+sc.pp.normalize_total(adata, target_sum=1e6)
+sc.pp.highly_variable_genes(adata, flavor='seurat_v3', layer='count', n_top_genes=2000)
+adata = adata[:, adata.var['highly_variable'] == True]
+sc.pp.scale(adata)
+
+# PCA reduction
+pca_model = PCA(n_components=200, random_state=42)
+adata_X = pca_model.fit_transform(adata.X)
+adata.obsm['X_pca'] = adata_X
+
+# Graph construction for SEDR
+batch_key = '%s'
+if batch_key:
+    sample_ids = adata.obs[batch_key].unique()
+    graph_dict = None
+    
+    for sample_id in sample_ids:
+        sample_data = adata[adata.obs[batch_key] == sample_id]
+        sample_graph = SEDR.graph_construction(sample_data, 12)
+        
+        if graph_dict is None:
+            graph_dict = sample_graph
+        else:
+            graph_dict = SEDR.combine_graph_dict(graph_dict, sample_graph)
+else:
+    graph_dict = SEDR.graph_construction(adata, 12)
+
+# Train SEDR model
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+sedr_net = SEDR.Sedr(adata.obsm['X_pca'], graph_dict, mode='clustering', device=device)
+sedr_net.train_with_dec(epochs = 300, dec_interval = 10)
+sedr_feat, _, _, _ = sedr_net.process()
+
+# save result
+pd.DataFrame(sedr_feat, index=adata.obs.index).to_csv('./cache/sedr_latent.csv')
+", batch_key))
+
+
+    # 加载潜在矩阵
+    latent_representation <- as.matrix(read.csv("./cache/sedr_latent.csv", row.names = 1))
+    
+    # 把降维结果保存在seurat_obj中
+    rownames(latent_representation) <- rownames(expr_data)
+    colnames(latent_representation) <- paste0("SEDR_", 1:ncol(latent_representation))
+    seurat_obj[["SEDR"]] <- CreateDimReducObject(embeddings = latent_representation, key = "SEDR_")
+    
+    return(seurat_obj)
+}
 
