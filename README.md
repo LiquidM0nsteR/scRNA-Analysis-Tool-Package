@@ -2,7 +2,7 @@
 # LiquidMonsteR: Single-Cell Transcriptomics Analysis Pipeline
 
 ### Powered by LiquidMonsteR  
-**From Hainan Institute of WhHan University of Technology, Sanya, Hainan**  
+**From Hainan Institute of WuHan University of Technology, Sanya, Hainan**  
 **First Created on July 7, 2024**
 
 ## Overview
